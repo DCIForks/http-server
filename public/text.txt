@@ -1,0 +1,1 @@
+This is a text file, not an HTML file. The browser will display its contents exactly as they are.

@@ -1,0 +1,14 @@
+{
+  "name": "http-demo",
+  "version": "1.0.0",
+  "description": "Demonstrates two servers that depend on the built-in Node.js http module: barebones.js, and the more complex server.js, which emulates the basic features of Express.",
+  "main": "server.js",
+  "scripts": {
+    "start": "nodemon server.js",
+    "simple": "nodemon barebones.js",
+    "express": "node express/server.js &",
+    "compare": "npm run express && npm start"
+  },
+  "keywords": [],
+  "license": "ISC"
+}
