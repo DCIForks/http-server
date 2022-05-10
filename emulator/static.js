@@ -1,8 +1,15 @@
 /**
  * static.js
- * 
+ *
  * This module provides a simplistic emulation of Express's
- * `static` feature. It does not a
+ * `static` feature.
+ *
+ * The first time a static file is requested, it is read in to
+ * a variable and cached for later re-use.
+ *
+ * NOTE: no support is given for media files such as PNG or JPG.
+ * SVG files are in fact text-based, so they work without any
+ * special support.
  */
 
 
@@ -12,21 +19,21 @@ const files = {}
 
 
 /**
- * Express requires `folder` to be an absolute path, but for
- * simplicity, we use a path relative to the server root here.
+ * Express allows `folder` to be an absolute path, but for
+ * simplicity, we just use a path relative to the server root here.
  */
 const static = (folder) => {
   // folder is relative to the parent directory
   const folderPath = path.join(__dirname, "..", folder)
   // folderPath is absolute
 
-  return (request, response) => {
+  const serveStatic = (request, response, next) => {
     // Get the path to the requested resource
     const urlPath = request.url === "/"
                   ? "/index.html"
                   : request.url
     const filePath = path.join(folderPath, urlPath)
-    
+
     // Check if the resource (or the lack of it) has been cached
     let data = files[filePath]
 
@@ -40,8 +47,9 @@ const static = (folder) => {
         status = 200
 
       } else {
-        contents = `The resource ${request.url} was not found`
-        status = 404
+        // No file found. Ignore the static path and try the
+        // next valid endpoint
+        return next(true)
       }
 
       data = {
@@ -52,11 +60,13 @@ const static = (folder) => {
       // Cache the data for this file for next time
       files[filePath] = data
     }
-    
+
     // Respond with the (cached) static content
     response.statusCode = data.status
     response.end(data.contents)
   }
+
+  return serveStatic
 }
 
 

@@ -1,19 +1,25 @@
 /**
  * protoExpress.js
- * 
+ *
  * This module is an emulation of some of the basic features of
  * the Express npm package:
  *   https://www.npmjs.com/package/express
- * 
+ *
  * It is based on the built-in `http` module. For the `static`
  * feature, it also indirectly uses the built-in `fs` and `path`
  * modules, for the static feature
- * 
+ *
  * Features:
  * 1. app.use()
  * 2. app.listen()
- * 3. Add request.params
- * 4. Add response.send
+ * 3. Add request properties:
+ *    + protocol
+ *    + orginalUrl
+ *    + params
+ * 4. Add response functions
+ *    + status(code)
+ *    + send(message)
+ * 5. Provides support for next()
  * 5. protoExpress.static()
  */
 
@@ -37,26 +43,47 @@ function createApplication() {
   // and `response` objects, and which calls the appropriate
   // handler, as defined by `.use()`
   const app = (request, response) => {
-    const { handler, params } = _parseUrl(request.url)
+    _addProtocolAndUrlTo(request)
+    _addStatusAndSendTo(response)
 
-    request.params = params
+    const queue = _createQueue(request.url)
 
-    if (handler) {
-      response.send = (message) => {
-        response.writeHead(200)
-        response.end(message)
-      }
-
-      response.status = (status) => {
-        response.writeHead(status)
-      }
-
-      handler(request, response)
-
-    } else {
-      // Fallback, in case no 
+    const _notFound = () => {
+      const { method, url } = request
       response.writeHead(404)
-      response.end("Not Found")
+      response.end(`Cannot ${method} ${url}`)
+    }
+
+    if (!queue.length) {
+      return _notFound()
+    }
+
+    let index = 0
+    _treatItem()
+
+    /**
+     * _treatItem is called on the first matching callback handler
+     * and also when next() is called from such a callback.
+     * @param {boolean} static_NotFound will be true if the
+     *                  call comes from the serveStatic function
+     *                  provided by static.js, when no matching
+     *                  static file is found
+     */
+    function _treatItem(static_NotFound) {
+      const item = queue[index]
+      if (!item) {
+        if (static_NotFound) {
+          _notFound()
+        }
+
+        return
+      }
+
+      index += 1
+      const { handler, params } = item
+      request.params = params
+
+      handler(request, response, _treatItem)
     }
   }
 
@@ -66,7 +93,7 @@ function createApplication() {
       handler = route
       route = "/"
     }
-    
+
     endPoints.push(_getChunks(route))
     handlers.push(handler)
   }
@@ -89,23 +116,60 @@ function createApplication() {
   // UTILITIES // UTILITIES // UTILITIES // UTILITIES //
 
   /**
-   * _parseUrl matches the actual url against endpoints that have
+   * Add properties to the request object, just as Express does
+   */
+  const _addProtocolAndUrlTo = (request) => {
+    const { url, connection } = request
+    request.protocol = connection.encrypted ? 'https' : 'http'
+    request.originalUrl = url
+  }
+
+
+  /**
+   * Add function to the response object, just as Express does
+   */
+  const _addStatusAndSendTo = (response) => {
+    response.status = (status) => {
+      response.writeHead(status)
+    }
+
+    response.send = (message) => {
+      response.end(message)
+    }
+  }
+
+
+  /**
+   * _createQueue matches the actual url against endpoints that have
    * been defined by `.use()`. Any substrings in the endpoint
    * that starts with ":" will be treated as parameter names
    */
-  const _parseUrl = (url) => {
-    let handler
+  const _createQueue = (url) => {
+    let queue = []
     let params = {}
 
     const urlChunks = _getChunks(url) // ["path","to","resource"]
 
-    endPoints.every((endPointChunks, index) => {
+    const _addMatchesToQueue = (endPointChunks, index) => {
+      if (endPointChunks.mapped) {
+        endPointChunks.every( mapping => {
+          // If a match is found, _addToQueueIfMatch will return
+          // false and the .every() method will stop processing
+          // items.
+          return _addToQueueIfMatch(mapping, index)
+        })
+
+      } else {
+        _addToQueueIfMatch(endPointChunks, index)
+      }
+    }
+
+    const _addToQueueIfMatch = (endPointChunks, index) => {
       let length = endPointChunks.length
 
       if (urlChunks.length < length) {
         // Not enough data in the url for this endpoint.
-        // Try the next
-        return true
+        return true // match not found
       }
 
       let chunks = urlChunks.slice(0, length)
@@ -124,7 +188,7 @@ function createApplication() {
           // This is a param. Strip the leading ":" and consider
           // this part of the match.
           urlParams[endPointChunk.slice(1)] = chunk
-        
+
         } else if (endPointChunk !== chunk) {
           // ... but actually the answer is "no".
           match = false
@@ -135,25 +199,36 @@ function createApplication() {
       if (match) {
         handler = handlers[index]
         params = urlParams
-        // We have found a match. Don't return true
-        // .every() will now exit
 
-      } else {
-        return true // try next route
+        queue.push({
+          handler,
+          params
+        })
       }
-    })
 
-    // If there was no match, handler will be undefined and
-    // params will still be {}
-    return {
-      handler,
-      params
+      return !match // false (to exit .every()) if match was found
     }
+
+    endPoints.forEach(_addMatchesToQueue)
+
+    // If there were no matches, queue will be empty
+    return queue
   }
 
 
+  /**
+   * _getChunks splits a string url into an array and returns the
+   * array. If an array of urls is provided, each url string is
+   * split recursively and an array of arrays is returned.
+   */
   const _getChunks = (url) => {
-    // "/path/to/treat/"
+    // "/path/to/treat/" or ["/path/one", "/path/two"]
+    if (Array.isArray(url)) {
+      const result = url.map( item => _getChunks(item))
+      result.mapped = true
+      return result
+    }
+
     return url
       .split("/") //            [ "", "path", "to", "treat", ""]
       .filter( chunk => !!chunk) // [ "path", "to", "treat" ]
@@ -163,5 +238,5 @@ function createApplication() {
   return app
 }
 
-// Add functionality for serving static files
+// Provide functionality for serving static files
 createApplication.static = static
